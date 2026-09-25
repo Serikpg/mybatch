@@ -132,13 +132,23 @@ void Database::update_status(int id, const std::string& status) {
     }
 }
 
-void Database::update_slurm_id_and_status(int id, const std::string& slurm_id, const std::string& status) {
-    std::string sql = "UPDATE jobs SET status = ?, slurm_job_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;";
+void Database::update_slurm_id_and_status(int id, const std::string& slurm_id, const std::string& status, const std::string& remote_host) {
+    std::string sql;
+    if (!remote_host.empty()) {
+        sql = "UPDATE jobs SET status = ?, slurm_job_id = ?, remote_host = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;";
+    } else {
+        sql = "UPDATE jobs SET status = ?, slurm_job_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;";
+    }
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(stmt, 1, status.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 2, slurm_id.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int(stmt, 3, id);
+        if (!remote_host.empty()) {
+            sqlite3_bind_text(stmt, 3, remote_host.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt, 4, id);
+        } else {
+            sqlite3_bind_int(stmt, 3, id);
+        }
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }

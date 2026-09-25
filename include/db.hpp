@@ -27,7 +27,7 @@ public:
     std::vector<Job> get_recent_jobs(int limit);
     bool get_job(int id, Job& job);
     void update_status(int id, const std::string& status);
-    void update_slurm_id_and_status(int id, const std::string& slurm_id, const std::string& status);
+    void update_slurm_id_and_status(int id, const std::string& slurm_id, const std::string& status, const std::string& remote_host = "");
     void update_logs(int id, const std::string& stdout_path, const std::string& stderr_path);
     void update_retry(int id, int attempts, const std::string& next_retry_at);
     std::vector<Job> get_active_jobs();

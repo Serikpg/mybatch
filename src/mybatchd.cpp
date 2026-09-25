@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
                         std::smatch match;
                         if (std::regex_search(res.stdout_str, match, re)) {
                             std::string s_id = match[1];
-                            db.update_slurm_id_and_status(q_job.id, s_id, "SUBMITTED");
+                            db.update_slurm_id_and_status(q_job.id, s_id, "SUBMITTED", target_remote);
                             log_msg("Successfully submitted job " + std::to_string(q_job.id) + " to Slurm. Slurm ID: " + s_id);
                         } else {
                             log_msg("Error: Could not parse Slurm job ID from output: " + res.stdout_str);

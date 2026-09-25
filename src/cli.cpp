@@ -13,7 +13,10 @@ void usage(const std::string& prog, int exit_code = 1) {
               << "      -l, --local          Treat script_path as local file (default: remote path)\n"
               << "      -r, --remote <host>  Specify/override target SSH remote\n"
               << "      -w, --workdir <dir>  Specify working directory\n"
-              << "  mystatus\n"
+              << "  mystatus [options]\n"
+              << "    Options:\n"
+              << "      -a, --all            Show all jobs including locally cancelled\n"
+              << "      -r, --remote <host>  Filter by remote host\n"
               << "  mycancel <local_id>\n"
               << "  mylogs <local_id>\n";
     exit(exit_code);
@@ -95,11 +98,52 @@ int main(int argc, char** argv) {
         }
     } 
     else if (base_prog == "mystatus") {
-        auto jobs = db.get_recent_jobs(25);
-        if (jobs.empty()) {
-            std::cout << "Queue is empty.\n";
+        bool show_all = false;
+        std::string filter_remote = config.remote;
+
+        for (int i = 1; i < argc; ++i) {
+            std::string arg = argv[i];
+            if (arg == "-a" || arg == "--all") {
+                show_all = true;
+            } else if (arg == "-r" || arg == "--remote") {
+                if (i + 1 < argc) filter_remote = argv[++i];
+                else { std::cerr << "Error: --remote requires an argument\n"; return 1; }
+            } else if (arg == "-h" || arg == "--help") {
+                std::cout << "Usage: mystatus [options]\n"
+                          << "  -a, --all            Show all jobs including local aborts/cancelled drafts\n"
+                          << "  -r, --remote <host>  Filter by remote host\n";
+                return 0;
+            }
+        }
+
+        auto jobs = db.get_recent_jobs(50);
+        std::vector<Job> filtered;
+        for (const auto& j : jobs) {
+            if (!show_all) {
+                // Exclude jobs that were cancelled locally before ever reaching Slurm
+                if (j.status == "CANCELLED" && j.slurm_job_id.empty()) {
+                    continue;
+                }
+                // If a remote is configured or specified, filter to relevant jobs
+                if (!filter_remote.empty()) {
+                    std::string effective_remote = !j.remote_host.empty() ? j.remote_host : "";
+                    // If job was local without a remote and never reached Slurm, skip
+                    if (effective_remote.empty() && j.slurm_job_id.empty()) {
+                        continue;
+                    }
+                    if (!effective_remote.empty() && effective_remote != filter_remote) {
+                        continue;
+                    }
+                }
+            }
+            filtered.push_back(j);
+        }
+
+        if (filtered.empty()) {
+            std::cout << "No matching jobs found in queue.\n";
             return 0;
         }
+
         std::cout << std::left 
                   << std::setw(5)  << "ID" 
                   << std::setw(15) << "Remote"
@@ -110,7 +154,7 @@ int main(int argc, char** argv) {
                   << std::setw(9)  << "Attempts" 
                   << "Script\n";
         std::cout << std::string(95, '-') << "\n";
-        for (const auto& j : jobs) {
+        for (const auto& j : filtered) {
             std::string s_id = j.slurm_job_id.empty() ? "-" : j.slurm_job_id;
             std::string remote_display = j.remote_host.empty() ? (config.remote.empty() ? "local" : config.remote) : j.remote_host;
             std::string type_display = j.is_local ? "local" : "remote";
