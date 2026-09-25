@@ -10,21 +10,42 @@ void log_msg(const std::string& msg) {
 }
 
 int main(int argc, char** argv) {
-    int interval = 15;
-    if (argc == 3 && std::string(argv[1]) == "--interval") {
-        interval = std::stoi(argv[2]);
+    Config config = load_config();
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--remote" || arg == "-r") {
+            if (i + 1 < argc) config.remote = argv[++i];
+            else { std::cerr << "Error: --remote requires argument\n"; return 1; }
+        } else if (arg == "--interval" || arg == "-i") {
+            if (i + 1 < argc) config.interval = std::stoi(argv[++i]);
+            else { std::cerr << "Error: --interval requires argument\n"; return 1; }
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: mybatchd [options]\n"
+                      << "  -r, --remote <host>    Default SSH remote host (or alias from ~/.ssh/config)\n"
+                      << "  -i, --interval <sec>   Polling interval in seconds (default: 15)\n";
+            return 0;
+        }
     }
 
-    log_msg("Starting Slurm local queue daemon. Polling every " + std::to_string(interval) + "s.");
+    log_msg("Starting Slurm local queue daemon.");
+    if (!config.remote.empty()) {
+        log_msg("Active remote host: " + config.remote);
+    } else {
+        log_msg("Running in local mode (no remote specified in config or arguments).");
+    }
+    log_msg("Polling interval: " + std::to_string(config.interval) + "s.");
 
     Database db;
 
     while (true) {
         try {
             auto active_jobs = db.get_active_jobs();
-            auto slurm_jobs = check_user_slurm_jobs();
 
             for (const auto& j : active_jobs) {
+                std::string target_remote = !j.remote_host.empty() ? j.remote_host : config.remote;
+                auto slurm_jobs = check_user_slurm_jobs(target_remote);
+
                 if (slurm_jobs.find(j.slurm_job_id) != slurm_jobs.end()) {
                     std::string slurm_state = slurm_jobs[j.slurm_job_id];
                     std::string new_status = j.status;
@@ -38,14 +59,14 @@ int main(int argc, char** argv) {
 
                         if (new_status == "RUNNING") {
                             std::string out_path, err_path;
-                            get_job_logs_from_scontrol(j.slurm_job_id, out_path, err_path);
+                            get_job_logs_from_scontrol(j.slurm_job_id, out_path, err_path, target_remote);
                             if (!out_path.empty() || !err_path.empty()) {
                                 db.update_logs(j.id, out_path, err_path);
                             }
                         }
                     }
                 } else {
-                    std::string sacct_state = get_job_state_from_sacct(j.slurm_job_id);
+                    std::string sacct_state = get_job_state_from_sacct(j.slurm_job_id, target_remote);
                     std::string final_state = "FAILED";
                     if (sacct_state.find("COMPLETED") == 0) final_state = "COMPLETED";
                     else if (sacct_state.find("CANCELLED") == 0) final_state = "CANCELLED";
@@ -56,13 +77,36 @@ int main(int argc, char** argv) {
                 }
             }
 
-            auto slurm_jobs_after = check_user_slurm_jobs();
-            if (slurm_jobs_after.empty()) {
-                Job q_job;
-                if (db.get_next_queued_job(q_job)) {
-                    log_msg("Found no active slurm jobs. Submitting local job " + std::to_string(q_job.id) + ": " + q_job.script_path);
-                    
-                    CmdResult res = run_subprocess({"sbatch", q_job.script_path}, q_job.work_dir);
+            Job q_job;
+            if (db.get_next_queued_job(q_job)) {
+                std::string target_remote = !q_job.remote_host.empty() ? q_job.remote_host : config.remote;
+                auto slurm_jobs_after = check_user_slurm_jobs(target_remote);
+
+                if (slurm_jobs_after.empty()) {
+                    log_msg("No active jobs on " + (target_remote.empty() ? "localhost" : target_remote) + 
+                            ". Submitting local queue job " + std::to_string(q_job.id) + " (" + q_job.script_path + ")");
+
+                    CmdResult res;
+                    if (!target_remote.empty()) {
+                        std::string exec_script_path = q_job.script_path;
+                        if (q_job.is_local) {
+                            // Stage local file to remote machine
+                            log_msg("Staging local script " + q_job.script_path + " to " + target_remote);
+                            run_subprocess({"ssh", target_remote, "mkdir -p ~/.slurm_queue/staged"});
+                            std::string remote_staged = "~/.slurm_queue/staged/job_" + std::to_string(q_job.id) + ".sh";
+                            run_subprocess({"scp", q_job.script_path, target_remote + ":" + remote_staged});
+                            exec_script_path = remote_staged;
+                        }
+
+                        std::string sbatch_cmd = "sbatch " + exec_script_path;
+                        if (!q_job.work_dir.empty()) {
+                            sbatch_cmd = "cd " + q_job.work_dir + " && " + sbatch_cmd;
+                        }
+                        res = run_subprocess({"ssh", target_remote, sbatch_cmd});
+                    } else {
+                        res = run_subprocess({"sbatch", q_job.script_path}, q_job.work_dir);
+                    }
+
                     if (res.exit_code == 0) {
                         std::regex re("Submitted batch job (\\d+)");
                         std::smatch match;
@@ -71,7 +115,7 @@ int main(int argc, char** argv) {
                             db.update_slurm_id_and_status(q_job.id, s_id, "SUBMITTED");
                             log_msg("Successfully submitted job " + std::to_string(q_job.id) + " to Slurm. Slurm ID: " + s_id);
                         } else {
-                            log_msg("Error: Could not parse slurm job id from output: " + res.stdout_str);
+                            log_msg("Error: Could not parse Slurm job ID from output: " + res.stdout_str);
                         }
                     } else {
                         log_msg("Failed to submit job " + std::to_string(q_job.id) + ": " + res.stderr_str);
@@ -87,7 +131,7 @@ int main(int argc, char** argv) {
             log_msg(std::string("Daemon error: ") + e.what());
         }
 
-        std::this_thread::sleep_for(std::chrono::seconds(interval));
+        std::this_thread::sleep_for(std::chrono::seconds(config.interval));
     }
     return 0;
 }

@@ -21,26 +21,31 @@ Database::Database() {
         "submit_attempts INTEGER DEFAULT 0,"
         "next_retry_at TIMESTAMP,"
         "stdout_path TEXT,"
-        "stderr_path TEXT"
+        "stderr_path TEXT,"
+        "is_local INTEGER DEFAULT 0,"
+        "remote_host TEXT"
         ");";
     
-    char* err_msg = nullptr;
-    if (sqlite3_exec(db, sql, 0, 0, &err_msg) != SQLITE_OK) {
-        std::cerr << "SQL error: " << err_msg << "\n";
-        sqlite3_free(err_msg);
-    }
+    sqlite3_exec(db, sql, 0, 0, nullptr);
+
+    // Apply migrations for existing databases
+    sqlite3_exec(db, "ALTER TABLE jobs ADD COLUMN is_local INTEGER DEFAULT 0;", nullptr, nullptr, nullptr);
+    sqlite3_exec(db, "ALTER TABLE jobs ADD COLUMN remote_host TEXT;", nullptr, nullptr, nullptr);
 }
 
 Database::~Database() {
     if (db) sqlite3_close(db);
 }
 
-int Database::add_job(const std::string& script_path, const std::string& work_dir) {
-    std::string sql = "INSERT INTO jobs (script_path, work_dir, status) VALUES (?, ?, 'QUEUED');";
+int Database::add_job(const std::string& script_path, const std::string& work_dir, bool is_local, const std::string& remote_host) {
+    std::string sql = "INSERT INTO jobs (script_path, work_dir, status, is_local, remote_host) VALUES (?, ?, 'QUEUED', ?, ?);";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(stmt, 1, script_path.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 2, work_dir.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 3, is_local ? 1 : 0);
+        if (!remote_host.empty()) sqlite3_bind_text(stmt, 4, remote_host.c_str(), -1, SQLITE_TRANSIENT);
+        else sqlite3_bind_null(stmt, 4);
         sqlite3_step(stmt);
         int id = sqlite3_last_insert_rowid(db);
         sqlite3_finalize(stmt);
@@ -52,30 +57,44 @@ int Database::add_job(const std::string& script_path, const std::string& work_di
 static Job parse_job_row(sqlite3_stmt* stmt) {
     Job job;
     job.id = sqlite3_column_int(stmt, 0);
-    job.script_path = (const char*)sqlite3_column_text(stmt, 1);
-    job.work_dir = (const char*)sqlite3_column_text(stmt, 2);
-    job.status = (const char*)sqlite3_column_text(stmt, 3);
+    const char* sp = (const char*)sqlite3_column_text(stmt, 1);
+    if (sp) job.script_path = sp;
+    const char* wd = (const char*)sqlite3_column_text(stmt, 2);
+    if (wd) job.work_dir = wd;
+    const char* st = (const char*)sqlite3_column_text(stmt, 3);
+    if (st) job.status = st;
     
     const char* s_id = (const char*)sqlite3_column_text(stmt, 4);
     if (s_id) job.slurm_job_id = s_id;
     
     const char* created = (const char*)sqlite3_column_text(stmt, 5);
     if (created) job.created_at = created;
+
+    const char* updated = (const char*)sqlite3_column_text(stmt, 6);
+    if (updated) job.updated_at = updated;
     
     job.submit_attempts = sqlite3_column_int(stmt, 7);
+
+    const char* retry = (const char*)sqlite3_column_text(stmt, 8);
+    if (retry) job.next_retry_at = retry;
     
     const char* out = (const char*)sqlite3_column_text(stmt, 9);
     if (out) job.stdout_path = out;
     
     const char* err = (const char*)sqlite3_column_text(stmt, 10);
     if (err) job.stderr_path = err;
+
+    job.is_local = (sqlite3_column_int(stmt, 11) != 0);
+
+    const char* remote = (const char*)sqlite3_column_text(stmt, 12);
+    if (remote) job.remote_host = remote;
     
     return job;
 }
 
 std::vector<Job> Database::get_recent_jobs(int limit) {
     std::vector<Job> jobs;
-    std::string sql = "SELECT id, script_path, work_dir, status, slurm_job_id, created_at, updated_at, submit_attempts, next_retry_at, stdout_path, stderr_path FROM jobs ORDER BY id DESC LIMIT ?;";
+    std::string sql = "SELECT id, script_path, work_dir, status, slurm_job_id, created_at, updated_at, submit_attempts, next_retry_at, stdout_path, stderr_path, is_local, remote_host FROM jobs ORDER BY id DESC LIMIT ?;";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_int(stmt, 1, limit);
@@ -88,7 +107,7 @@ std::vector<Job> Database::get_recent_jobs(int limit) {
 }
 
 bool Database::get_job(int id, Job& job) {
-    std::string sql = "SELECT id, script_path, work_dir, status, slurm_job_id, created_at, updated_at, submit_attempts, next_retry_at, stdout_path, stderr_path FROM jobs WHERE id = ?;";
+    std::string sql = "SELECT id, script_path, work_dir, status, slurm_job_id, created_at, updated_at, submit_attempts, next_retry_at, stdout_path, stderr_path, is_local, remote_host FROM jobs WHERE id = ?;";
     sqlite3_stmt* stmt;
     bool found = false;
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
@@ -155,7 +174,7 @@ void Database::update_retry(int id, int attempts, const std::string& next_retry_
 
 std::vector<Job> Database::get_active_jobs() {
     std::vector<Job> jobs;
-    std::string sql = "SELECT id, script_path, work_dir, status, slurm_job_id, created_at, updated_at, submit_attempts, next_retry_at, stdout_path, stderr_path FROM jobs WHERE status IN ('SUBMITTED', 'RUNNING');";
+    std::string sql = "SELECT id, script_path, work_dir, status, slurm_job_id, created_at, updated_at, submit_attempts, next_retry_at, stdout_path, stderr_path, is_local, remote_host FROM jobs WHERE status IN ('SUBMITTED', 'RUNNING');";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
         while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -167,7 +186,7 @@ std::vector<Job> Database::get_active_jobs() {
 }
 
 bool Database::get_next_queued_job(Job& job) {
-    std::string sql = "SELECT id, script_path, work_dir, status, slurm_job_id, created_at, updated_at, submit_attempts, next_retry_at, stdout_path, stderr_path FROM jobs WHERE status = 'QUEUED' AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP) ORDER BY id ASC LIMIT 1;";
+    std::string sql = "SELECT id, script_path, work_dir, status, slurm_job_id, created_at, updated_at, submit_attempts, next_retry_at, stdout_path, stderr_path, is_local, remote_host FROM jobs WHERE status = 'QUEUED' AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP) ORDER BY id ASC LIMIT 1;";
     sqlite3_stmt* stmt;
     bool found = false;
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {

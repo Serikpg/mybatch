@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <iostream>
+#include <fstream>
 #include <sstream>
 #include <chrono>
 #include <iomanip>
@@ -24,6 +25,65 @@ std::string get_db_path() {
     std::string cmd = "mkdir -p " + db_dir;
     system(cmd.c_str());
     return db_dir + "/queue.db";
+}
+
+std::string get_config_path() {
+    const char* home = getenv("HOME");
+    std::string db_dir = std::string(home ? home : ".") + "/.slurm_queue";
+    std::string cmd = "mkdir -p " + db_dir;
+    system(cmd.c_str());
+    return db_dir + "/config";
+}
+
+Config load_config() {
+    Config conf;
+    std::string path = get_config_path();
+
+    std::ifstream infile(path);
+    if (!infile.good()) {
+        // Create a default config template
+        std::ofstream outfile(path);
+        if (outfile.is_open()) {
+            outfile << "# Slurm Broker Configuration\n"
+                    << "# Set your remote SSH host (e.g., username@hostname or ~/.ssh/config alias):\n"
+                    << "# remote = mn5\n\n"
+                    << "# Optional default remote working directory:\n"
+                    << "# workdir = /gpfs/projects/...\n\n"
+                    << "# Polling interval in seconds (default: 15):\n"
+                    << "interval = 15\n";
+            outfile.close();
+        }
+    } else {
+        std::string line;
+        while (std::getline(infile, line)) {
+            line = trim(line);
+            if (line.empty() || line[0] == '#' || line[0] == ';') continue;
+            auto eq_pos = line.find('=');
+            if (eq_pos != std::string::npos) {
+                std::string key = trim(line.substr(0, eq_pos));
+                std::string val = trim(line.substr(eq_pos + 1));
+                if (key == "remote") {
+                    conf.remote = val;
+                } else if (key == "workdir" || key == "remote_workdir") {
+                    conf.work_dir = val;
+                } else if (key == "interval") {
+                    try { conf.interval = std::stoi(val); } catch (...) {}
+                }
+            }
+        }
+        infile.close();
+    }
+
+    const char* env_remote = getenv("MYBATCH_REMOTE");
+    if (env_remote && strlen(env_remote) > 0) {
+        conf.remote = env_remote;
+    }
+    const char* env_workdir = getenv("MYBATCH_WORKDIR");
+    if (env_workdir && strlen(env_workdir) > 0) {
+        conf.work_dir = env_workdir;
+    }
+
+    return conf;
 }
 
 std::string get_current_timestamp() {
@@ -115,12 +175,17 @@ CmdResult run_subprocess(const std::vector<std::string>& cmd, const std::string&
     return result;
 }
 
-std::map<std::string, std::string> check_user_slurm_jobs() {
+std::map<std::string, std::string> check_user_slurm_jobs(const std::string& remote) {
     std::map<std::string, std::string> jobs;
-    const char* user = getenv("USER");
-    if (!user) return jobs;
+    CmdResult res;
+    if (remote.empty()) {
+        const char* user = getenv("USER");
+        if (!user) return jobs;
+        res = run_subprocess({"squeue", "-u", user, "-h", "-o", "%i %t"});
+    } else {
+        res = run_subprocess({"ssh", remote, "squeue -u $USER -h -o \"%i %t\""});
+    }
 
-    CmdResult res = run_subprocess({"squeue", "-u", user, "-h", "-o", "%i %t"});
     if (res.exit_code == 0) {
         std::istringstream iss(res.stdout_str);
         std::string line;
@@ -135,8 +200,14 @@ std::map<std::string, std::string> check_user_slurm_jobs() {
     return jobs;
 }
 
-std::string get_job_state_from_sacct(const std::string& slurm_job_id) {
-    CmdResult res = run_subprocess({"sacct", "-j", slurm_job_id, "-X", "-n", "-P", "-o", "State"});
+std::string get_job_state_from_sacct(const std::string& slurm_job_id, const std::string& remote) {
+    CmdResult res;
+    if (remote.empty()) {
+        res = run_subprocess({"sacct", "-j", slurm_job_id, "-X", "-n", "-P", "-o", "State"});
+    } else {
+        res = run_subprocess({"ssh", remote, "sacct -j " + slurm_job_id + " -X -n -P -o State"});
+    }
+
     if (res.exit_code == 0) {
         std::istringstream iss(res.stdout_str);
         std::string state;
@@ -148,8 +219,14 @@ std::string get_job_state_from_sacct(const std::string& slurm_job_id) {
     return "UNKNOWN";
 }
 
-void get_job_logs_from_scontrol(const std::string& slurm_job_id, std::string& out_path, std::string& err_path) {
-    CmdResult res = run_subprocess({"scontrol", "show", "job", slurm_job_id});
+void get_job_logs_from_scontrol(const std::string& slurm_job_id, std::string& out_path, std::string& err_path, const std::string& remote) {
+    CmdResult res;
+    if (remote.empty()) {
+        res = run_subprocess({"scontrol", "show", "job", slurm_job_id});
+    } else {
+        res = run_subprocess({"ssh", remote, "scontrol show job " + slurm_job_id});
+    }
+
     if (res.exit_code == 0) {
         std::istringstream iss(res.stdout_str);
         std::string word;
