@@ -30,7 +30,7 @@ _mybatch_comp() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local opts="-l --local -r --remote -w --workdir -h --help"
+    local opts="-f --from -w --workdir --chdir -C -D -l --local -r --remote -h --help"
 
     case "$prev" in
         -r|--remote)
@@ -39,7 +39,7 @@ _mybatch_comp() {
             COMPREPLY=( $(compgen -W "$hosts" -- "$cur") )
             return 0
             ;;
-        -w|--workdir)
+        -f|--from|-w|--workdir|--chdir|-C|-D)
             COMPREPLY=( $(compgen -d -- "$cur") )
             return 0
             ;;
@@ -111,8 +111,17 @@ _mylogs_comp() {
 _mystatus_comp() {
     local cur prev
     cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    if [[ "$prev" == "-r" || "$prev" == "--remote" ]]; then
+        local hosts
+        hosts=$(_mybatch_ssh_hosts)
+        COMPREPLY=( $(compgen -W "$hosts" -- "$cur") )
+        return 0
+    fi
+
     if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-h --help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-a --all -r --remote -v --verbose -h --help" -- "$cur") )
         return 0
     fi
 }

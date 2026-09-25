@@ -10,13 +10,14 @@ void usage(const std::string& prog, int exit_code = 1) {
     std::cout << "Usage:\n"
               << "  mybatch [options] <script_path>\n"
               << "    Options:\n"
+              << "      -f, --from <dir>     Working directory to submit the job from (also --workdir, --chdir, -w, -D)\n"
               << "      -l, --local          Treat script_path as local file (default: remote path)\n"
               << "      -r, --remote <host>  Specify/override target SSH remote\n"
-              << "      -w, --workdir <dir>  Specify working directory\n"
               << "  mystatus [options]\n"
               << "    Options:\n"
               << "      -a, --all            Show all jobs including locally cancelled\n"
               << "      -r, --remote <host>  Filter by remote host\n"
+              << "      -v, --verbose        Show working directory for each job\n"
               << "  mycancel <local_id>\n"
               << "  mylogs <local_id>\n";
     exit(exit_code);
@@ -43,9 +44,11 @@ int main(int argc, char** argv) {
             } else if (arg == "--remote" || arg == "-r") {
                 if (i + 1 < argc) remote_override = argv[++i];
                 else { std::cerr << "Error: --remote requires an argument\n"; return 1; }
-            } else if (arg == "--workdir" || arg == "-w") {
+            } else if (arg == "--from" || arg == "-f" || 
+                       arg == "--workdir" || arg == "-w" || 
+                       arg == "--chdir" || arg == "-C" || arg == "-D") {
                 if (i + 1 < argc) workdir_override = argv[++i];
-                else { std::cerr << "Error: --workdir requires an argument\n"; return 1; }
+                else { std::cerr << "Error: " << arg << " requires a directory path\n"; return 1; }
             } else if (arg == "--help" || arg == "-h") {
                 usage(base_prog, 0);
             } else if (!arg.empty() && arg[0] == '-') {
@@ -91,6 +94,8 @@ int main(int argc, char** argv) {
             std::cout << "  Script path: " << script_path << "\n";
             if (!work_dir.empty()) {
                 std::cout << "  Working dir: " << work_dir << "\n";
+            } else {
+                std::cout << "  Working dir: (remote default $HOME — use --from <dir> to set submit directory)\n";
             }
         } else {
             std::cerr << "Failed to add job to queue.\n";
@@ -99,19 +104,23 @@ int main(int argc, char** argv) {
     } 
     else if (base_prog == "mystatus") {
         bool show_all = false;
+        bool verbose = false;
         std::string filter_remote = config.remote;
 
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
             if (arg == "-a" || arg == "--all") {
                 show_all = true;
+            } else if (arg == "-v" || arg == "--verbose") {
+                verbose = true;
             } else if (arg == "-r" || arg == "--remote") {
                 if (i + 1 < argc) filter_remote = argv[++i];
                 else { std::cerr << "Error: --remote requires an argument\n"; return 1; }
             } else if (arg == "-h" || arg == "--help") {
                 std::cout << "Usage: mystatus [options]\n"
                           << "  -a, --all            Show all jobs including local aborts/cancelled drafts\n"
-                          << "  -r, --remote <host>  Filter by remote host\n";
+                          << "  -r, --remote <host>  Filter by remote host\n"
+                          << "  -v, --verbose        Show working directory for each job\n";
                 return 0;
             }
         }
@@ -168,6 +177,9 @@ int main(int argc, char** argv) {
                       << std::setw(21) << j.created_at 
                       << std::setw(9)  << j.submit_attempts 
                       << script_name << "\n";
+            if (verbose && !j.work_dir.empty()) {
+                std::cout << "      Workdir: " << j.work_dir << "\n";
+            }
         }
     } 
     else if (base_prog == "mycancel") {

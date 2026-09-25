@@ -104,8 +104,9 @@ By default, `mybatch` operates on **remote paths** (no local file checks):
 # Path on the remote cluster filesystem
 ./mybatch /gpfs/projects/bsc/user/sim_task1.sh
 
-# With a specific remote working directory
-./mybatch -w /gpfs/scratch/user run.sh
+# Specify where the job should be delivered from (working directory):
+./mybatch --from /gpfs/scratch/bsc18/bsc094088/cvdp-servers2 runners/cvdp-update-3/subset/run.sh
+# (Aliases: -f, --chdir, -C, -D, -w, --workdir)
 
 # Override target remote host for a specific job
 ./mybatch -r cluster2 /gpfs/home/job.sh

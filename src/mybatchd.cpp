@@ -87,6 +87,8 @@ int main(int argc, char** argv) {
                             ". Submitting local queue job " + std::to_string(q_job.id) + " (" + q_job.script_path + ")");
 
                     CmdResult res;
+                    std::string effective_work_dir = !q_job.work_dir.empty() ? q_job.work_dir : config.work_dir;
+
                     if (!target_remote.empty()) {
                         std::string exec_script_path = q_job.script_path;
                         if (q_job.is_local) {
@@ -98,13 +100,24 @@ int main(int argc, char** argv) {
                             exec_script_path = remote_staged;
                         }
 
-                        std::string sbatch_cmd = "sbatch " + exec_script_path;
-                        if (!q_job.work_dir.empty()) {
-                            sbatch_cmd = "cd " + q_job.work_dir + " && " + sbatch_cmd;
+                        std::string sbatch_cmd = "sbatch";
+                        if (!effective_work_dir.empty()) {
+                            sbatch_cmd += " --chdir=" + effective_work_dir;
                         }
+                        sbatch_cmd += " " + exec_script_path;
+
+                        if (!effective_work_dir.empty()) {
+                            sbatch_cmd = "cd " + effective_work_dir + " && " + sbatch_cmd;
+                        }
+                        log_msg("Executing on " + target_remote + ": " + sbatch_cmd);
                         res = run_subprocess({"ssh", target_remote, sbatch_cmd});
                     } else {
-                        res = run_subprocess({"sbatch", q_job.script_path}, q_job.work_dir);
+                        std::vector<std::string> local_cmd = {"sbatch"};
+                        if (!effective_work_dir.empty()) {
+                            local_cmd.push_back("--chdir=" + effective_work_dir);
+                        }
+                        local_cmd.push_back(q_job.script_path);
+                        res = run_subprocess(local_cmd, effective_work_dir);
                     }
 
                     if (res.exit_code == 0) {
