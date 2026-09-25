@@ -27,3 +27,14 @@ add_custom_command(TARGET mybatch_cli POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E create_symlink mybatch_cli mylogs
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+install(TARGETS mybatchd mybatch_cli DESTINATION bin)
+install(FILES 
+    ${CMAKE_BINARY_DIR}/mybatch
+    ${CMAKE_BINARY_DIR}/mystatus
+    ${CMAKE_BINARY_DIR}/mycancel
+    ${CMAKE_BINARY_DIR}/mylogs
+    DESTINATION bin
+)
+install(FILES completions/mybatch.bash DESTINATION share/bash-completion/completions RENAME mybatch)
+

@@ -66,7 +66,25 @@ export MYBATCH_WORKDIR="/gpfs/scratch/user"
 ### 3. Command-Line Options
 Pass `--remote <host>` or `-r <host>` directly to `mybatch` or `mybatchd`.
 
+> [!NOTE]
+> **No rebuild needed:** The configuration file (`~/.slurm_queue/config`) is read dynamically at runtime on every execution or daemon cycle. You can freely change `remote`, `workdir`, or `interval` at any time without recompiling the application.
+
 ---
+
+## Bash Autocompletion
+
+To enable `<Tab>` autocompletion for flags (`--remote`, `--local`, `--workdir`), script files, SSH host aliases, and job IDs:
+
+Add this line to your `~/.bashrc`:
+```bash
+source /path/to/mybatch/completions/mybatch.bash
+```
+Or install it for your current user:
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+cp completions/mybatch.bash ~/.local/share/bash-completion/completions/mybatch
+```
+After reloading your shell (`source ~/.bashrc`), pressing `<Tab>` will automatically complete options and arguments for `mybatch`, `mybatchd`, `mycancel`, `mystatus`, and `mylogs`.
 
 ## Usage
 
