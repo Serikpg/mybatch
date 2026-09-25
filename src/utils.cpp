@@ -193,7 +193,10 @@ std::map<std::string, std::string> check_user_slurm_jobs(const std::string& remo
             std::istringstream ls(line);
             std::string id, state;
             if (ls >> id >> state) {
-                jobs[id] = state;
+                // Ensure id is a numeric Slurm job ID (ignoring banners like 'load bsc/1.0')
+                if (!id.empty() && std::isdigit(static_cast<unsigned char>(id[0]))) {
+                    jobs[id] = state;
+                }
             }
         }
     }
@@ -208,12 +211,21 @@ std::string get_job_state_from_sacct(const std::string& slurm_job_id, const std:
         res = run_subprocess({"ssh", remote, "sacct -j " + slurm_job_id + " -X -n -P -o State"});
     }
 
+    static const std::vector<std::string> valid_states = {
+        "COMPLETED", "TIMEOUT", "FAILED", "CANCELLED", "OUT_OF_MEMORY",
+        "NODE_FAIL", "PREEMPTED", "SUSPENDED", "RUNNING", "PENDING", "BOOT_FAIL", "DEADLINE"
+    };
+
     if (res.exit_code == 0) {
         std::istringstream iss(res.stdout_str);
-        std::string state;
-        while (std::getline(iss, state)) {
-            state = trim(state);
-            if (!state.empty()) return state;
+        std::string line;
+        while (std::getline(iss, line)) {
+            line = trim(line);
+            for (const auto& vs : valid_states) {
+                if (line.find(vs) == 0) {
+                    return vs;
+                }
+            }
         }
     }
     return "UNKNOWN";

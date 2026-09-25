@@ -69,8 +69,12 @@ int main(int argc, char** argv) {
                     std::string sacct_state = get_job_state_from_sacct(j.slurm_job_id, target_remote);
                     std::string final_state = "FAILED";
                     if (sacct_state.find("COMPLETED") == 0) final_state = "COMPLETED";
+                    else if (sacct_state.find("TIMEOUT") == 0) final_state = "TIMEOUT";
                     else if (sacct_state.find("CANCELLED") == 0) final_state = "CANCELLED";
-                    else if (sacct_state.find("FAILED") == 0 || sacct_state.find("TIMEOUT") == 0 || sacct_state.find("OUT_OF_MEMORY") == 0 || sacct_state.find("NODE_FAIL") == 0) final_state = "FAILED";
+                    else if (sacct_state.find("OUT_OF_MEMORY") == 0) final_state = "OUT_OF_MEMORY";
+                    else if (sacct_state.find("NODE_FAIL") == 0) final_state = "NODE_FAIL";
+                    else if (sacct_state.find("FAILED") == 0) final_state = "FAILED";
+                    else if (sacct_state != "UNKNOWN" && !sacct_state.empty()) final_state = sacct_state;
                     
                     log_msg("Job " + std::to_string(j.id) + " (Slurm " + j.slurm_job_id + ") ended with state " + final_state + " (sacct: " + sacct_state + ")");
                     db.update_status(j.id, final_state);
