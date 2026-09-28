@@ -119,8 +119,19 @@ If your script is on your local machine and you want `mybatchd` to stage/transfe
 ```
 
 ### 3. Check Queue Status (`mystatus`)
+By default, `mystatus` displays the last **6** jobs:
 ```bash
 ./mystatus
+
+# Specify the number of jobs to display:
+./mystatus -n 10
+# (Aliases: --number <N>, --limit <N>, or 0 to show all)
+
+# Show working directory for each job:
+./mystatus -v
+
+# Show all jobs including locally cancelled aborts:
+./mystatus -a
 ```
 Output:
 ```

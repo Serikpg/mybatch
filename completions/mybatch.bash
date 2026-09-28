@@ -120,8 +120,13 @@ _mystatus_comp() {
         return 0
     fi
 
+    if [[ "$prev" == "-n" || "$prev" == "--number" || "$prev" == "--limit" ]]; then
+        COMPREPLY=( $(compgen -W "5 6 10 20 50" -- "$cur") )
+        return 0
+    fi
+
     if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "-a --all -r --remote -v --verbose -h --help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "-n --number --limit -a --all -r --remote -v --verbose -h --help" -- "$cur") )
         return 0
     fi
 }

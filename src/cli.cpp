@@ -15,6 +15,7 @@ void usage(const std::string& prog, int exit_code = 1) {
               << "      -r, --remote <host>  Specify/override target SSH remote\n"
               << "  mystatus [options]\n"
               << "    Options:\n"
+              << "      -n, --number <N>     Number of jobs to display (default: 6, 0 for all)\n"
               << "      -a, --all            Show all jobs including locally cancelled\n"
               << "      -r, --remote <host>  Filter by remote host\n"
               << "      -v, --verbose        Show working directory for each job\n"
@@ -105,6 +106,7 @@ int main(int argc, char** argv) {
     else if (base_prog == "mystatus") {
         bool show_all = false;
         bool verbose = false;
+        int limit = 6;
         std::string filter_remote = config.remote;
 
         for (int i = 1; i < argc; ++i) {
@@ -113,19 +115,36 @@ int main(int argc, char** argv) {
                 show_all = true;
             } else if (arg == "-v" || arg == "--verbose") {
                 verbose = true;
+            } else if (arg == "-n" || arg == "--number" || arg == "--limit") {
+                if (i + 1 < argc) {
+                    try {
+                        limit = std::stoi(argv[++i]);
+                    } catch (...) {
+                        std::cerr << "Error: " << arg << " requires an integer argument\n";
+                        return 1;
+                    }
+                } else {
+                    std::cerr << "Error: " << arg << " requires an argument\n";
+                    return 1;
+                }
             } else if (arg == "-r" || arg == "--remote") {
                 if (i + 1 < argc) filter_remote = argv[++i];
                 else { std::cerr << "Error: --remote requires an argument\n"; return 1; }
             } else if (arg == "-h" || arg == "--help") {
                 std::cout << "Usage: mystatus [options]\n"
+                          << "  -n, --number <N>     Number of jobs to display (default: 6, 0 for all)\n"
                           << "  -a, --all            Show all jobs including local aborts/cancelled drafts\n"
                           << "  -r, --remote <host>  Filter by remote host\n"
                           << "  -v, --verbose        Show working directory for each job\n";
                 return 0;
+            } else {
+                std::cerr << "Unknown option: " << arg << "\n";
+                return 1;
             }
         }
 
-        auto jobs = db.get_recent_jobs(50);
+        int fetch_count = (limit > 0) ? std::max(100, limit * 10) : 500;
+        auto jobs = db.get_recent_jobs(fetch_count);
         std::vector<Job> filtered;
         for (const auto& j : jobs) {
             if (!show_all) {
@@ -146,6 +165,10 @@ int main(int argc, char** argv) {
                 }
             }
             filtered.push_back(j);
+        }
+
+        if (limit > 0 && filtered.size() > static_cast<size_t>(limit)) {
+            filtered.resize(limit);
         }
 
         if (filtered.empty()) {
